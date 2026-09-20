@@ -8,5 +8,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["./main.ts", "./preload.cts"]
+  "include": ["./main.ts", "preload.cts"]
 }

@@ -93,8 +93,8 @@ import {
   screen,
   globalShortcut,
 } from "electron";
-
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -103,6 +103,11 @@ const __dirname = path.dirname(__filename);
 let haloWindow: BrowserWindow | null = null;
 
 function createHaloWindow() {
+  const preloadPath = path.join(__dirname, "preload.cjs");
+
+  console.log("MAIN → preload path:", preloadPath);
+  console.log("MAIN → preload exists:", fs.existsSync(preloadPath));
+
   haloWindow = new BrowserWindow({
     width: 100,
     height: 60,
@@ -113,20 +118,57 @@ function createHaloWindow() {
 
     alwaysOnTop: true,
     skipTaskbar: true,
-
     hasShadow: false,
 
     webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
+      preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
     },
+  });
+
+  // Detect whether Electron fails to execute the preload script.
+  haloWindow.webContents.on(
+    "preload-error",
+    (_event, preloadPath, error) => {
+      console.error("MAIN → PRELOAD ERROR");
+      console.error("Path:", preloadPath);
+      console.error("Error:", error);
+    }
+  );
+
+  // Confirm that the renderer page has finished loading.
+  haloWindow.webContents.on("did-finish-load", async () => {
+    console.log("MAIN → renderer finished loading");
+    try {
+      const hasHalo = await haloWindow?.webContents.executeJavaScript("Boolean(window.halo)");
+      console.log("MAIN → window.halo exists in renderer:", hasHalo);
+      if (hasHalo) {
+        const haloKeys = await haloWindow?.webContents.executeJavaScript("Object.keys(window.halo || {})");
+        console.log("MAIN → window.halo keys:", haloKeys);
+      }
+      setTimeout(() => {
+        // console.log("TEST → sending listening state to renderer");
+        haloWindow?.webContents.send("halo-state", "listening");
+      }, 2000);
+      setTimeout(() => {
+        // console.log("TEST → sending idle state to renderer");
+        haloWindow?.webContents.send("halo-state", "idle");
+      }, 5000);
+    } catch (err) {
+      console.error("MAIN → error checking window.halo:", err);
+    }
+  });
+
+  haloWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    console.log(`RENDERER CONSOLE [${level}]: ${message} (${sourceId}:${line})`);
   });
 
   haloWindow.setIgnoreMouseEvents(true);
 
   haloWindow.loadURL("http://localhost:5173");
 
+  // Keep the Halo window positioned above the cursor.
   const moveHalo = () => {
     if (!haloWindow || haloWindow.isDestroyed()) {
       return;
@@ -159,7 +201,15 @@ app.whenReady().then(() => {
     console.log(`HALO → ${state.toUpperCase()}`);
 
     if (haloWindow && !haloWindow.isDestroyed()) {
-      haloWindow.webContents.send("halo-state", state);
+      console.log(
+        "MAIN → sending state to renderer:",
+        state
+      );
+
+      haloWindow.webContents.send(
+        "halo-state",
+        state
+      );
     }
   });
 });

@@ -17,18 +17,28 @@
 // });
 import { contextBridge, ipcRenderer } from "electron";
 
+console.log("PRELOAD → loaded");
+
 contextBridge.exposeInMainWorld("halo", {
   onStateChange: (callback: (state: string) => void) => {
+    console.log("PRELOAD → onStateChange registered");
+
     const listener = (
       _event: Electron.IpcRendererEvent,
       state: string
     ) => {
-      callback(state);
+      console.log("PRELOAD → received state:", state);
+      try {
+        callback(state);
+      } catch (err) {
+        console.error("PRELOAD → error calling callback:", err);
+      }
     };
 
     ipcRenderer.on("halo-state", listener);
 
     return () => {
+      console.log("PRELOAD → onStateChange cleanup called");
       ipcRenderer.removeListener("halo-state", listener);
     };
   },

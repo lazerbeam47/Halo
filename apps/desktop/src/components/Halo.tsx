@@ -24,28 +24,28 @@ export default function Halo({
   className = "",
   style: customStyle,
 }: HaloProps = {}) {
-  const [internalState, setInternalState] = useState<HaloState>(DEFAULT_HALO_STATE);
-
+  // const [internalState, setInternalState] = useState<HaloState>(DEFAULT_HALO_STATE);
+  
   // Use controlled state if provided, otherwise internal state
-  const currentState: HaloState = controlledState ?? internalState;
+  const currentState = controlledState ?? DEFAULT_HALO_STATE;
 
-  useEffect(() => {
-    // Gracefully handle browser/dev environments where Electron preload is not present
-    if (typeof window === "undefined" || !window.halo?.onStateChange) {
-      return;
-    }
+  // useEffect(() => {
+  //   // Gracefully handle browser/dev environments where Electron preload is not present
+  //   if (typeof window === "undefined" || !window.halo?.onStateChange) {
+  //     return;
+  //   }
 
-    const cleanup = window.halo.onStateChange((newState) => {
-      if (isHaloState(newState)) {
-        if (!controlledState) {
-          setInternalState(newState);
-        }
-        onStateChange?.(newState);
-      }
-    });
+  //   const cleanup = window.halo.onStateChange((newState) => {
+  //     if (isHaloState(newState)) {
+  //       if (!controlledState) {
+  //         setInternalState(newState);
+  //       }
+  //       onStateChange?.(newState);
+  //     }
+  //   });
 
-    return cleanup;
-  }, [controlledState, onStateChange]);
+  //   return cleanup;
+  // }, [controlledState, onStateChange]);
 
   const config = useMemo(
     () => getHaloVisualConfig(currentState),
