@@ -101,12 +101,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let haloWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 
 function createHaloWindow() {
+  if (haloWindow && !haloWindow.isDestroyed()) {
+    return;
+  }
+
   const preloadPath = path.join(__dirname, "preload.cjs");
 
   console.log("MAIN → preload path:", preloadPath);
-  console.log("MAIN → preload exists:", fs.existsSync(preloadPath));
+  console.log(
+    "MAIN → preload exists:",
+    fs.existsSync(preloadPath)
+  );
 
   haloWindow = new BrowserWindow({
     width: 100,
@@ -127,7 +135,6 @@ function createHaloWindow() {
     },
   });
 
-  // Detect whether Electron fails to execute the preload script.
   haloWindow.webContents.on(
     "preload-error",
     (_event, preloadPath, error) => {
@@ -137,38 +144,57 @@ function createHaloWindow() {
     }
   );
 
-  // Confirm that the renderer page has finished loading.
   haloWindow.webContents.on("did-finish-load", async () => {
-    console.log("MAIN → renderer finished loading");
+    console.log("MAIN → Halo renderer finished loading");
+
     try {
-      const hasHalo = await haloWindow?.webContents.executeJavaScript("Boolean(window.halo)");
-      console.log("MAIN → window.halo exists in renderer:", hasHalo);
+      const hasHalo =
+        await haloWindow?.webContents.executeJavaScript(
+          "Boolean(window.halo)"
+        );
+
+      console.log(
+        "MAIN → window.halo exists:",
+        hasHalo
+      );
+
       if (hasHalo) {
-        const haloKeys = await haloWindow?.webContents.executeJavaScript("Object.keys(window.halo || {})");
-        console.log("MAIN → window.halo keys:", haloKeys);
+        const haloKeys =
+          await haloWindow?.webContents.executeJavaScript(
+            "Object.keys(window.halo || {})"
+          );
+
+        console.log(
+          "MAIN → window.halo keys:",
+          haloKeys
+        );
       }
-      setTimeout(() => {
-        // console.log("TEST → sending listening state to renderer");
-        haloWindow?.webContents.send("halo-state", "listening");
-      }, 2000);
-      setTimeout(() => {
-        // console.log("TEST → sending idle state to renderer");
-        haloWindow?.webContents.send("halo-state", "idle");
-      }, 5000);
-    } catch (err) {
-      console.error("MAIN → error checking window.halo:", err);
+    } catch (error) {
+      console.error(
+        "MAIN → error checking window.halo:",
+        error
+      );
     }
   });
 
-  haloWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    console.log(`RENDERER CONSOLE [${level}]: ${message} (${sourceId}:${line})`);
-  });
+  haloWindow.webContents.on(
+    "console-message",
+    (_event, level, message, line, sourceId) => {
+      console.log(
+        `RENDERER CONSOLE [${level}]: ${message} (${sourceId}:${line})`
+      );
+    }
+  );
 
+  // Halo should never capture mouse clicks.
   haloWindow.setIgnoreMouseEvents(true);
 
-  haloWindow.loadURL("http://localhost:5173");
+  // Tell React this is the Halo window.
+  haloWindow.loadURL(
+    "http://localhost:5173/?window=halo"
+  );
 
-  // Keep the Halo window positioned above the cursor.
+  // Keep Halo positioned above the cursor.
   const moveHalo = () => {
     if (!haloWindow || haloWindow.isDestroyed()) {
       return;
@@ -184,23 +210,83 @@ function createHaloWindow() {
   };
 
   setInterval(moveHalo, 16);
+
+  haloWindow.on("closed", () => {
+    haloWindow = null;
+  });
+}
+
+function createSettingsWindow() {
+  if (
+    settingsWindow &&
+    !settingsWindow.isDestroyed()
+  ) {
+    settingsWindow.focus();
+    return;
+  }
+
+  const preloadPath = path.join(
+    __dirname,
+    "preload.cjs"
+  );
+
+  settingsWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+
+    minWidth: 800,
+    minHeight: 600,
+
+    frame: true,
+    transparent: false,
+    resizable: true,
+
+    alwaysOnTop: false,
+    skipTaskbar: false,
+
+    title: "Halo Settings",
+
+    webPreferences: {
+      preload: preloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  // Tell React this is the Settings window.
+  settingsWindow.loadURL(
+    "http://localhost:5173/?window=settings"
+  );
+
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
 }
 
 app.whenReady().then(() => {
   console.log("HALO STARTED");
 
+  // Create exactly ONE of each window.
   createHaloWindow();
+  createSettingsWindow();
 
   let isListening = false;
 
   globalShortcut.register("Alt+Space", () => {
     isListening = !isListening;
 
-    const state = isListening ? "listening" : "idle";
+    const state = isListening
+      ? "listening"
+      : "idle";
 
-    console.log(`HALO → ${state.toUpperCase()}`);
+    console.log(
+      `HALO → ${state.toUpperCase()}`
+    );
 
-    if (haloWindow && !haloWindow.isDestroyed()) {
+    if (
+      haloWindow &&
+      !haloWindow.isDestroyed()
+    ) {
       console.log(
         "MAIN → sending state to renderer:",
         state

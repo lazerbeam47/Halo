@@ -28,33 +28,36 @@ export class VoiceInput {
         }
 
     }
-    async stop():Promise<Blob | null>{
-        if(this.mediaRecorder?.state==="inactive"){
-            console.warn("VoiceInput is not recording.");
-            return null;
-        }
+    async stop(): Promise<Blob | null> {
+  const recorder = this.mediaRecorder;
 
-        return new Promise((resolve)=>{
-            const recorder = this.mediaRecorder!;
-             recorder.onstop = () => {
-        const audioBlob = new Blob(this.audioChunks, { // Create a Blob from the recorded audio chunks
-          type: recorder.mimeType || "audio/webm",
-        });
+  if (!recorder || recorder.state === "inactive") {
+    console.log("VOICE → not recording");
+    return null;
+  }
 
-        console.log(
-          `VOICE → recording stopped (${audioBlob.size} bytes)`
-        );
+  return new Promise((resolve) => {
+    recorder.onstop = () => {
+      const audioBlob = new Blob(this.audioChunks, {
+        type: recorder.mimeType || "audio/webm",
+      });
 
-        this.mediaStream?.getTracks().forEach((track) => track.stop()); // Stop all tracks in the media stream which releases the microphone/stops the microphone access
+      console.log(
+        `VOICE → recording stopped (${audioBlob.size} bytes)`
+      );
 
-        this.mediaStream = null; // Clear the media stream reference
-        this.mediaRecorder = null; // Clear the media recorder reference
-        this.audioChunks = []; // Clear the audio chunks
+      this.mediaStream?.getTracks().forEach((track) => {
+        track.stop();
+      });
 
-        resolve(audioBlob); // Resolve the promise with the recorded audio Blob
-      }; 
+      this.mediaStream = null;
+      this.mediaRecorder = null;
+      this.audioChunks = [];
 
-      recorder.stop(); // Stop the recording which triggers the onstop event and finalizes the audio data
-    });
+      resolve(audioBlob);
+    };
+
+    recorder.stop();
+  });
 }
 }
