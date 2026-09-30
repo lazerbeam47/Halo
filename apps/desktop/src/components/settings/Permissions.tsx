@@ -1,16 +1,11 @@
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+const API_URL = "http://127.0.0.1:8000";
 
-const API_URL = "http://127.0.0.1:8000"; // Replace with your FastAPI server URL
-
-const applications = [
-  "Spotify",
-  "Google Chrome",
-  "Visual Studio Code",
-  "Slack",
-  "Notes",
-  "GarageBand",
-];
+type Application = {
+  name: string;
+  path: string;
+};
 
 type Capability =
   | "launch"
@@ -50,75 +45,94 @@ type PermissionState = Record<
   Record<Capability, boolean>
 >;
 
-const createDefaultPermissions = (): PermissionState => {
-  return Object.fromEntries(
-    applications.map((app) => [
-      app,
-      {
-        launch: false,
-        screen_read: false,
-        mouse_control: false,
-        keyboard_control: false,
-      },
-    ])
-  ) as PermissionState;
-};
-
 export default function Permissions() {
   const [search, setSearch] = useState("");
+
+  const [applications, setApplications] =
+    useState<Application[]>([]);
+
   const [selectedApp, setSelectedApp] =
-    useState(applications[0]);
+    useState<Application | null>(null);
 
   const [permissions, setPermissions] =
-    useState<PermissionState>(
-      createDefaultPermissions()
-    );
+    useState<PermissionState>({});
 
   const [loading, setLoading] = useState(true);
+
+  /*
+   * Load applications and permissions
+   */
   useEffect(() => {
-  async function loadPermissions() {
-    try {
-      const response = await fetch(
-        `${API_URL}/permissions`
-      );
+    async function loadData() {
+      try {
+        const [
+          applicationsResponse,
+          permissionsResponse,
+        ] = await Promise.all([
+          fetch(`${API_URL}/applications`),
+          fetch(`${API_URL}/permissions`),
+        ]);
 
-      if (!response.ok) {
-        throw new Error(
-          `Failed to load permissions: ${response.status}`
-        );
-      }
-
-      const data = await response.json();
-
-      setPermissions((current) => {
-        const merged = {
-          ...current,
-        };
-
-        for (const app of applications) {
-          if (data[app]) {
-            merged[app] = {
-              ...current[app],
-              ...data[app],
-            };
-          }
+        if (!applicationsResponse.ok) {
+          throw new Error(
+            `Failed to load applications: ${applicationsResponse.status}`
+          );
         }
 
-        return merged;
-      });
-    } catch (error) {
-      console.error(
-        "PERMISSIONS → failed to load:",
-        error
-      );
-    } finally {
-      setLoading(false);
+        if (!permissionsResponse.ok) {
+          throw new Error(
+            `Failed to load permissions: ${permissionsResponse.status}`
+          );
+        }
+
+        const applicationsData: Application[] =
+          await applicationsResponse.json();
+
+        const permissionsData =
+          await permissionsResponse.json();
+
+        setApplications(applicationsData);
+
+        setSelectedApp(
+          applicationsData.length > 0
+            ? applicationsData[0]
+            : null
+        );
+
+        /*
+         * Start with every discovered application
+         * having all permissions disabled.
+         */
+        const initialPermissions: PermissionState =
+          {};
+
+        for (const app of applicationsData) {
+          initialPermissions[app.name] = {
+            launch: false,
+            screen_read: false,
+            mouse_control: false,
+            keyboard_control: false,
+            ...(permissionsData[app.name] || {}),
+          };
+        }
+
+        setPermissions(initialPermissions);
+      } catch (error) {
+        console.error(
+          "PERMISSIONS → failed to load:",
+          error
+        );
+      } finally {
+        setLoading(false);
+      }
     }
-  }
 
-  loadPermissions();
-}, []);
+    loadData();
+  }, []);
 
+  /*
+   * Filter applications based on search.
+   */
   const filteredApplications = useMemo(() => {
     const query = search.trim().toLowerCase();
 
@@ -127,69 +141,111 @@ export default function Permissions() {
     }
 
     return applications.filter((app) =>
-      app.toLowerCase().includes(query)
+      app.name.toLowerCase().includes(query)
     );
-  }, [search]);
+  }, [search, applications]);
 
+  /*
+   * Toggle a permission for the selected application.
+   */
   const togglePermission = async (
-  capability: Capability
-) => {
-  const currentlyEnabled =
-    permissions[selectedApp][capability];
-
-  const action = currentlyEnabled
-    ? "revoke"
-    : "grant";
-
-  // Optimistically update the UI.
-  setPermissions((current) => ({
-    ...current,
-    [selectedApp]: {
-      ...current[selectedApp],
-      [capability]: !currentlyEnabled,
-    },
-  }));
-
-  try {
-    const response = await fetch(
-      `${API_URL}/permissions/${encodeURIComponent(
-        selectedApp
-      )}/${action}?capability=${encodeURIComponent(
-        capability
-      )}`,
-      {
-        method: "POST",
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Permission update failed: ${response.status}`
-      );
+    capability: Capability
+  ) => {
+    if (!selectedApp) {
+      return;
     }
 
-    console.log(
-      `PERMISSIONS → ${action} ${selectedApp}.${capability}`
-    );
-  } catch (error) {
-    console.error(
-      "PERMISSIONS → failed to update:",
-      error
-    );
+    const appName = selectedApp.name;
 
-    // Roll back if backend update failed.
+    const currentlyEnabled =
+      permissions[appName]?.[capability] ?? false;
+
+    const action = currentlyEnabled
+      ? "revoke"
+      : "grant";
+
+    /*
+     * Optimistically update UI.
+     */
     setPermissions((current) => ({
       ...current,
-      [selectedApp]: {
-        ...current[selectedApp],
-        [capability]: currentlyEnabled,
+      [appName]: {
+        ...current[appName],
+        [capability]: !currentlyEnabled,
       },
     }));
-  }
-};
 
-  const selectedPermissions =
-    permissions[selectedApp];
+    try {
+      const response = await fetch(
+        `${API_URL}/permissions/${encodeURIComponent(
+          appName
+        )}/${action}?capability=${encodeURIComponent(
+          capability
+        )}`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Permission update failed: ${response.status}`
+        );
+      }
+
+      console.log(
+        `PERMISSIONS → ${action} ${appName}.${capability}`
+      );
+    } catch (error) {
+      console.error(
+        "PERMISSIONS → failed to update:",
+        error
+      );
+
+      /*
+       * Roll back optimistic update
+       * if backend request fails.
+       */
+      setPermissions((current) => ({
+        ...current,
+        [appName]: {
+          ...current[appName],
+          [capability]: currentlyEnabled,
+        },
+      }));
+    }
+  };
+
+  const selectedPermissions = selectedApp
+    ? permissions[selectedApp.name]
+    : null;
+
+  /*
+   * Loading state
+   */
+  if (loading) {
+    return (
+      <div className="max-w-6xl">
+        <h1 className="text-4xl font-black tracking-tight">
+          Permissions
+        </h1>
+
+        <p className="mt-2 text-xs opacity-60">
+          Control what Halo can access on your Mac.
+        </p>
+
+        <div className="mt-10 border-2 border-dashed border-[#171717] p-10 text-center">
+          <div className="text-3xl text-[#e8b800]">
+            ✦
+          </div>
+
+          <p className="mt-2 text-xs opacity-60">
+            Discovering applications...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl">
@@ -206,6 +262,7 @@ export default function Permissions() {
 
       {/* Main permission panel */}
       <div className="mt-10 grid min-h-[520px] grid-cols-[280px_1fr] border-2 border-[#171717] bg-[#f4edda] shadow-[5px_5px_0_#171717]">
+
         {/* Applications */}
         <section className="border-r-2 border-[#171717]">
           <div className="border-b-2 border-[#171717] p-5">
@@ -229,7 +286,7 @@ export default function Permissions() {
             </div>
           </div>
 
-          <div className="p-3">
+          <div className="max-h-[420px] overflow-y-auto p-3">
             {filteredApplications.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs opacity-50">
                 No applications found.
@@ -239,11 +296,12 @@ export default function Permissions() {
                 {filteredApplications.map(
                   (app) => {
                     const active =
-                      app === selectedApp;
+                      app.path ===
+                      selectedApp?.path;
 
                     return (
                       <button
-                        key={app}
+                        key={app.path}
                         type="button"
                         onClick={() =>
                           setSelectedApp(app)
@@ -260,7 +318,9 @@ export default function Permissions() {
                           }
                         `}
                       >
-                        <span>{app}</span>
+                        <span>
+                          {app.name}
+                        </span>
 
                         {active && (
                           <span className="text-[10px] font-black">
@@ -278,90 +338,121 @@ export default function Permissions() {
 
         {/* Selected application */}
         <section className="p-8">
-          <div className="flex items-start justify-between border-b-2 border-[#171717] pb-6">
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.2em] opacity-50">
-                Application Access
+          {!selectedApp ||
+          !selectedPermissions ? (
+            <div className="flex h-full items-center justify-center">
+              <div className="text-center">
+                <div className="text-3xl text-[#e8b800]">
+                  ✦
+                </div>
+
+                <p className="mt-2 text-xs opacity-60">
+                  Select an application.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Application header */}
+              <div className="flex items-start justify-between border-b-2 border-[#171717] pb-6">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] opacity-50">
+                    Application Access
+                  </div>
+
+                  <h2 className="mt-2 text-3xl font-black">
+                    {selectedApp.name}
+                  </h2>
+
+                  <p className="mt-2 max-w-lg truncate text-[10px] opacity-40">
+                    {selectedApp.path}
+                  </p>
+                </div>
+
+                <div className="-rotate-6 rounded-[50%] border-[4px] border-[#e8b800] px-5 py-2 shadow-[3px_3px_0_#171717]">
+                  HALO
+                </div>
               </div>
 
-              <h2 className="mt-2 text-3xl font-black">
-                {selectedApp}
-              </h2>
-            </div>
+              {/* Capabilities */}
+              <div className="mt-8 space-y-4">
+                {capabilities.map(
+                  (capability) => {
+                    const enabled =
+                      selectedPermissions[
+                        capability.id
+                      ];
 
-            <div className="-rotate-6 rounded-[50%] border-[4px] border-[#e8b800] px-5 py-2 shadow-[3px_3px_0_#171717]">
-              HALO
-            </div>
-          </div>
+                    return (
+                      <div
+                        key={capability.id}
+                        className="flex items-center justify-between border-2 border-[#171717] bg-[#f9f4e7] p-5"
+                      >
+                        <div className="pr-8">
+                          <div className="text-sm font-black">
+                            {capability.label}
+                          </div>
 
-          <div className="mt-8 space-y-4">
-            {capabilities.map(
-              (capability) => {
-                const enabled =
-                  selectedPermissions[
-                    capability.id
-                  ];
+                          <div className="mt-1 text-[11px] opacity-55">
+                            {
+                              capability.description
+                            }
+                          </div>
+                        </div>
 
-                return (
-                  <div
-                    key={capability.id}
-                    className="flex items-center justify-between border-2 border-[#171717] bg-[#f9f4e7] p-5"
-                  >
-                    <div className="pr-8">
-                      <div className="text-sm font-black">
-                        {capability.label}
-                      </div>
-
-                      <div className="mt-1 text-[11px] opacity-55">
-                        {capability.description}
-                      </div>
-                    </div>
-
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={enabled}
-                        onClick={() => togglePermission(capability.id)}
-                        className={`
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          onClick={() =>
+                            togglePermission(
+                              capability.id
+                            )
+                          }
+                          className={`
                             relative
                             h-7 w-14
                             shrink-0
                             border-2 border-[#171717]
                             ${
-                            enabled
+                              enabled
                                 ? "bg-[#ffd83d] shadow-[3px_3px_0_#171717]"
                                 : "bg-[#d8d0bc]"
                             }
-                        `}
+                          `}
                         >
-                        <span
+                          <span
                             className={`
-                            absolute
-                            top-1/2
-                            left-1
-                            h-5 w-5
-                            -translate-y-1/2
-                            border-2 border-[#171717]
-                            bg-[#f4edda]
-                            transition-all duration-150
-                            ${
+                              absolute
+                              top-1/2
+                              left-1
+                              h-5 w-5
+                              -translate-y-1/2
+                              border-2 border-[#171717]
+                              bg-[#f4edda]
+                              transition-all duration-150
+                              ${
                                 enabled
-                                ? "left-[30px]"
-                                : "left-1"
-                            }
+                                  ? "left-[30px]"
+                                  : "left-1"
+                              }
                             `}
-                        />
-                    </button>
-                  </div>
-                );
-              }
-            )}
-          </div>
+                          />
+                        </button>
+                      </div>
+                    );
+                  }
+                )}
+              </div>
 
-          <div className="mt-8 rotate-[-0.4deg] border-2 border-dashed border-[#171717] p-4 text-[11px] opacity-60">
-            ✎ These permissions control what Halo is
-            allowed to do with {selectedApp}.
-          </div>
+              {/* Footer note */}
+              <div className="mt-8 rotate-[-0.4deg] border-2 border-dashed border-[#171717] p-4 text-[11px] opacity-60">
+                ✎ These permissions control what Halo
+                is allowed to do with{" "}
+                {selectedApp.name}.
+              </div>
+            </>
+          )}
         </section>
       </div>
     </div>

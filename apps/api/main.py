@@ -9,10 +9,20 @@ from services.execution_strategy import ExecutionStrategy
 from permissions.manager import PermissionManager
 from services.intent_router import IntentRouter
 from services.intent_validator import IntentValidator
+from services.app_discovery import ApplicationDiscovery
+from services.app_launcher import AppLauncher
+from services.screen_reader import ScreenReader
+from fastapi.responses import FileResponse
+from services.vision import VisionService
+
 load_dotenv()
 stt = STTService()
 app = FastAPI()  # Initialize FastAPI application
-permission_manager = PermissionManager()  # Create an instance of the PermissionsManager class to handle permission management 
+permission_manager = PermissionManager()  # Create an instance of the PermissionsManager class to handle permission management
+app_discovery = ApplicationDiscovery()  # Create an instance of the ApplicationDiscovery class to handle application discovery
+app_launcher = AppLauncher()  # Create an instance of the AppLauncher class to handle application launching
+screen_reader = ScreenReader()  # Create an instance of the ScreenReader class to handle screen capturing
+vision_service = VisionService()  # Create an instance of the VisionService class to handle image processing
 
 app.add_middleware(
     CORSMiddleware,
@@ -74,3 +84,78 @@ def grant_permission(app_name: str, capability: str):
 def revoke_permission(app_name: str, capability: str):
     permission_manager.revoke(app_name, capability)  # Revoke a specific capability from an application by calling the revoke method of the PermissionsManager instance
     return {"app": app_name, "capability": capability, "status": "revoked"}  # Return a confirmation response indicating that the permission has been revoked
+
+@app.get("/applications")
+def get_applications():
+    return app_discovery.discover()
+
+@app.post("/execute")
+async def execute_intent(intent: IntentRequest): # Accepts a request body that conforms to the IntentRequest model defined earlier
+    result = await intent_router.route(intent.text) # Call the route method of the IntentRouter instance to determine the appropriate action based on the provided text
+    result = intent_validator.validate(result) # Validate the result returned by the intent router to ensure it conforms to expected formats and rules
+
+    if result.status == "clarify":
+        return result
+
+    if result.intent == "open_application":
+        application = result.target.application
+
+        if not application:
+            return {
+                "status": "clarify",
+                "reason": "Application is required.",
+            }
+
+        if not permission_manager.is_allowed(
+            application,
+            "launch",
+        ):
+            return {
+                "status": "permission_required",
+                "application": application,
+                "capability": "launch",
+            }
+
+        app_launcher.launch(application)
+
+        return {
+            "status": "executed",
+            "intent": "open_application",
+            "application": application,
+        }
+
+    return {
+        "status": "unsupported",
+        "reason": f"Execution for {result.intent} is not implemented yet.",
+    }
+
+@app.post("/screen/capture")
+def capture_screen():
+    path = screen_reader.capture()
+
+    return FileResponse(
+        path,
+        media_type="image/png",
+        filename="halo-screen.png",
+    )
+
+@app.post("/screen/analyze")
+def analyze_screen():
+    path = screen_reader.capture() # Capture the current screen and save it to a file, returning the file path
+    descriprion = vision.analyze(
+        path,
+        """
+        Describe what is currently visible on the user's screen.
+        Identify:
+        -the main application or window
+        -important visible UI elements
+        -buttons,menus,inputs,dialogs, and text
+        -anything that appears relevant for the interacting with the screen
+        
+        Keep the response concise and factual.
+        """,
+    )
+    return {
+        "status":"analyzed",
+        "description":descriprion
+    }
