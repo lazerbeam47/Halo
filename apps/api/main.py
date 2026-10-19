@@ -12,8 +12,11 @@ from services.intent_validator import IntentValidator
 from services.app_discovery import ApplicationDiscovery
 from services.app_launcher import AppLauncher
 from services.screen_reader import ScreenReader
+from schemas.screen import ScreenFindRequest
 from fastapi.responses import FileResponse
 from services.vision import VisionService
+from fastapi.responses import JSONResponse
+
 
 load_dotenv()
 stt = STTService()
@@ -141,21 +144,64 @@ def capture_screen():
 
 @app.post("/screen/analyze")
 def analyze_screen():
-    path = screen_reader.capture() # Capture the current screen and save it to a file, returning the file path
-    descriprion = vision.analyze(
-        path,
-        """
-        Describe what is currently visible on the user's screen.
-        Identify:
-        -the main application or window
-        -important visible UI elements
-        -buttons,menus,inputs,dialogs, and text
-        -anything that appears relevant for the interacting with the screen
-        
-        Keep the response concise and factual.
-        """,
-    )
+    path = screen_reader.capture() # Capture the current screen and save it to a temporary file, returning the path to that file
+
+    description = vision_service.analyze(path) # Analyze the captured screen image using the VisionService instance, which processes the image and returns a description of the visible elements
+
     return {
-        "status":"analyzed",
-        "description":descriprion
+        "status": "analyzed",
+        "description": description.model_dump(), # Return the description of the analyzed screen in a structured format, which includes the application name and the list of detected UI elements with their types, labels, and bounding boxes
     }
+
+@app.post("/screen/find")
+def find_screen_element(request: ScreenFindRequest):
+    path=screen_reader.capture() # Capture the current screen and save it to a temporary file, returning the path to that file
+
+    result=vision_service.find(
+        path,
+        request.target,
+    )
+
+    if not result.found or result.element is None:
+        return result.model_dump()
+    
+    bounds = result.element.bounds.model_dump() # Convert the bounds of the found element to a dictionary format for easier access and manipulation
+
+    if not screen_reader.validate_bounds(path,bounds):
+        return {
+            "found":False,
+            "element":None,
+            "reason":"Detected coordinates are outside the screenshot.",
+        }
+    return result.model_dump()
+
+
+@app.post("/screen/find/annotated")
+def find_annotated(request: ScreenFindRequest):
+    path = screen_reader.capture()
+
+    result = vision_service.find(path, request.target)
+
+    if not result.found or result.element is None:
+        return result.model_dump()
+
+    bounds = result.element.bounds.model_dump()
+
+    if not screen_reader.validate_bounds(path, bounds):
+        return {
+            "found": False,
+            "element": None,
+            "reason": "Invalid coordinates",
+        }
+
+    annotated_path = screen_reader.annotate(
+        path,
+        bounds,
+        result.element.label,
+    )
+
+    return FileResponse(
+        annotated_path,
+        media_type="image/png",
+        filename="halo-annotated.png",
+    )
